@@ -1,32 +1,130 @@
 # 临时邮箱接口要求
 
-这份文档不是某个具体邮箱服务的使用手册，而是本项目对“临时邮箱服务”这一段的对接契约。
+这份文档说明本项目支持的三种邮箱 provider 及其接口契约。
 
-如果你想把自己的邮箱系统接进 `grok-register`，只要实现这里约定的接口，控制台和注册执行器就能直接工作。
+执行器实现见 [email_register.py](email_register.py)。
+
+## Provider 选择
+
+在配置中通过 `temp_mail_provider` 字段选择 provider：
+
+- `mailbox_system`：Cloud Mail 系统
+- `duckmail`：DuckMail
+- `generic`：旧版 Temp Mail
+- 留空：自动检测
+
+---
+
+## mailbox_system (Cloud Mail)
+
+推荐使用。配置字段：
+
+- `temp_mail_api_base`：邮箱系统 API 地址
+- `temp_mail_admin_email`：管理员邮箱
+- `temp_mail_admin_password`：管理员密码
+- `temp_mail_domain`：注册用邮箱域名
+
+### 1. 生成 Token
+
+用于管理员身份认证。Token 全局唯一，重新生成会使旧 Token 失效。
+
+- 方法：`POST`
+- 路径：`/api/public/genToken`
+
+请求体：
+
+```json
+{
+  “email”: “admin@example.com”,
+  “password”: “your_password”
+}
+```
+
+成功响应：
+
+```json
+{
+  “code”: 200,
+  “message”: “success”,
+  “data”: {
+    “token”: “9f4e298e-7431-4c76-bc15-4931c3a73984”
+  }
+}
+```
+
+后续所有请求使用 `Authorization: Bearer <token>` 认证。
+
+### 2. 添加用户（创建邮箱）
+
+- 方法：`POST`
+- 路径：`/api/public/addUser`
+- 认证头：`Authorization: Bearer <token>`
+
+请求体：
+
+```json
+{
+  “list”: [
+    {
+      “email”: “abc123@example.com”,
+      “password”: “generated_password”
+    }
+  ]
+}
+```
+
+执行器会自动随机生成邮箱前缀和密码。
+
+### 3. 邮件查询
+
+- 方法：`POST`
+- 路径：`/api/public/emailList`
+- 认证头：`Authorization: Bearer <token>`
+
+请求体（执行器自动填写）：
+
+```json
+{
+  “toEmail”: “abc123@example.com”,
+  “type”: 0,
+  “isDel”: 0,
+  “timeSort”: “desc”,
+  “num”: 1,
+  “size”: 20
+}
+```
+
+成功响应中的 `data` 数组每项包含：
+
+- `emailId`：邮件 ID
+- `subject`：邮件主题
+- `text`：纯文本内容
+- `content`：HTML 内容
+- `toEmail`：收件人邮箱
+- `sendEmail`：发件人邮箱
+- `createTime`：接收时间
+- `isDel`：是否已删除
+
+`mailbox_system` 不需要单独的邮件详情接口，`emailList` 已包含完整内容。
+
+---
+
+## DuckMail
+
+不需要额外配置接口契约，仓库已原生支持。
+
+配置方式：
+
+- `temp_mail_provider`: `duckmail`
+- `temp_mail_api_base`: `https://api.duckmail.sbs`
+- `temp_mail_domain`: 可留空自动选公开域名
+- `temp_mail_admin_password`: 只有私有域名场景才需要填 API Key
+
+---
+
+## Generic Temp Mail (旧版)
 
 如果你用的是 DuckMail：
-
-- 不需要自己再实现这里这套 `/admin/new_address` / `/api/mails` / `/api/mail/<id>` 契约
-- 当前仓库已经原生支持 DuckMail 官方接口，直接把 `temp_mail_api_base` 配成 `https://api.duckmail.sbs` 即可
-- `temp_mail_domain` 可留空自动选公开域名；`temp_mail_admin_password` 只有在私有域名场景下才需要填 DuckMail API Key
-
-## 一句话说明
-
-当前执行器实际依赖 3 个接口：
-
-- 创建邮箱地址
-- 列出收件箱邮件
-- 获取单封邮件详情
-
-控制台里的这些字段会参与这段链路：
-
-- `temp_mail_api_base`
-- `temp_mail_admin_password`
-- `temp_mail_domain`
-- `temp_mail_site_password`
-- `proxy`
-
-## 当前代码实际调用的接口
 
 执行器实现见 [email_register.py](/home/codex/grok-register/email_register.py)。
 

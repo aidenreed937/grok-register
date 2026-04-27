@@ -45,12 +45,23 @@ docker compose up -d --build
 
 然后在控制台里填写：
 
+- `temp_mail_provider`: 选择 `mailbox_system`
 - `temp_mail_api_base`
+- `temp_mail_admin_email`
 - `temp_mail_admin_password`
 - `temp_mail_domain`
 
-其中 DuckMail 的推荐填法是：
+推荐使用 Cloud Mail (mailbox_system) 填法：
 
+- `temp_mail_provider`: `mailbox_system`
+- `temp_mail_api_base`: 你的 Cloud Mail 接口地址
+- `temp_mail_admin_email`: 管理员邮箱
+- `temp_mail_admin_password`: 管理员密码
+- `temp_mail_domain`: 注册用邮箱域名
+
+也兼容 DuckMail：
+
+- `temp_mail_provider`: `duckmail`
 - `temp_mail_api_base`: `https://api.duckmail.sbs`
 - `temp_mail_admin_password`: 可留空；如果你要用 DuckMail 私有域名，再填 API Key
 - `temp_mail_domain`: 可留空；留空时执行器会自动挑一个 DuckMail 公开可用域名
@@ -110,9 +121,11 @@ python DrissionPage_example.py --count 1
   "run": {
     "count": 50
   },
-  "temp_mail_api_base": "https://mail-api.example.com",
+  "temp_mail_provider": "mailbox_system",
+  "temp_mail_api_base": "https://doc.skymail.ink",
+  "temp_mail_admin_email": "admin@example.com",
   "temp_mail_admin_password": "<your_admin_password>",
-  "temp_mail_domain": "mail.example.com",
+  "temp_mail_domain": "example.com",
   "temp_mail_site_password": "",
   "proxy": "",
   "browser_proxy": "",
@@ -128,7 +141,8 @@ python DrissionPage_example.py --count 1
 
 - 仓库里提供的是可公开分享的示例配置，不包含任何真实邮箱接口、真实域名、密码或 token
 - 实际运行时，请把你自己的参数写进本机 `config.json` 或控制台系统配置里，不要把生产凭据提交回仓库
-- 代码兼容旧版 `duckmail_*` 字段；现在也原生支持把 DuckMail 直接接到 `temp_mail_*` 这一套字段上
+- 支持三种邮箱 provider：`mailbox_system`（Cloud Mail）、`duckmail`、`generic`（旧版 Temp Mail）
+- 代码兼容旧版 `duckmail_*` 字段
 
 ## 文档入口
 

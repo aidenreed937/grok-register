@@ -2,9 +2,11 @@
     "run": {
         "count": 50
     },
-    "temp_mail_api_base": "https://mail-api.example.com",
+    "temp_mail_provider": "mailbox_system",
+    "temp_mail_api_base": "https://doc.skymail.ink",
+    "temp_mail_admin_email": "admin@example.com",
     "temp_mail_admin_password": "<your_admin_password>",
-    "temp_mail_domain": "mail.example.com",
+    "temp_mail_domain": "example.com",
     "temp_mail_site_password": "",
     "proxy": "",
     "browser_proxy": "",

@@ -50,23 +50,38 @@
           </label>
           <label>
             <span>邮箱 API Base</span>
-            <small>临时邮箱服务接口地址，既支持自定义 Temp Mail，也支持 DuckMail。</small>
-            <input name="temp_mail_api_base" placeholder="https://api.duckmail.sbs">
+            <small>邮箱服务接口地址。</small>
+            <input name="temp_mail_api_base" placeholder="https://doc.skymail.ink">
+          </label>
+          <label>
+            <span>邮箱 Provider</span>
+            <small>选择邮箱后端类型。mailbox_system 为 Cloud Mail 系统；duckmail 为 DuckMail；generic 为旧版 Temp Mail。</small>
+            <select name="temp_mail_provider">
+              <option value="">自动检测</option>
+              <option value="mailbox_system">mailbox_system (Cloud Mail)</option>
+              <option value="duckmail">duckmail</option>
+              <option value="generic">generic (Temp Mail)</option>
+            </select>
+          </label>
+          <label>
+            <span>管理员邮箱</span>
+            <small>mailbox_system 需要管理员邮箱用于生成 Token。</small>
+            <input name="temp_mail_admin_email" placeholder="admin@example.com">
           </label>
           <label>
             <span>邮箱域名</span>
-            <small>注册时实际使用的邮箱后缀。DuckMail 留空时会自动选公开域名。</small>
+            <small>注册时实际使用的邮箱后缀。</small>
             <input name="temp_mail_domain" placeholder="example.com">
           </label>
           <label>
-            <span>邮箱管理口令 / DuckMail API Key</span>
-            <small>自定义 Temp Mail 填管理口令；DuckMail 可留空或填 API Key 以使用私有域名。</small>
-            <input name="temp_mail_admin_password" placeholder="admin password / dk_xxx">
+            <span>管理员密码 / API Key</span>
+            <small>mailbox_system 填管理员密码；DuckMail 可留空或填 API Key；generic 填管理口令。</small>
+            <input name="temp_mail_admin_password" type="password" placeholder="admin password">
           </label>
           <label>
             <span>站点密码</span>
-            <small>如果你的邮箱 API 还要求额外站点鉴权，就填这里。</small>
-            <input name="temp_mail_site_password" placeholder="optional">
+            <small>仅旧版 generic provider 使用，mailbox_system 和 DuckMail 可忽略。</small>
+            <input name="temp_mail_site_password" type="password" placeholder="optional">
           </label>
           <label>
             <span>Token 上传接口</span>
@@ -139,23 +154,38 @@
             </label>
             <label>
               <span>邮箱 API Base 覆盖</span>
-              <small>当前任务临时改用别的邮箱接口时再填，也支持 DuckMail。</small>
+              <small>当前任务临时改用别的邮箱接口时再填。</small>
               <input name="temp_mail_api_base" placeholder="留空则用系统默认">
             </label>
             <label>
+              <span>邮箱 Provider 覆盖</span>
+              <small>选择此任务使用的邮箱后端类型。</small>
+              <select name="temp_mail_provider">
+                <option value="">留空则用系统默认</option>
+                <option value="mailbox_system">mailbox_system (Cloud Mail)</option>
+                <option value="duckmail">duckmail</option>
+                <option value="generic">generic (Temp Mail)</option>
+              </select>
+            </label>
+            <label>
+              <span>管理员邮箱覆盖</span>
+              <small>当前任务临时改管理员邮箱时再填。</small>
+              <input name="temp_mail_admin_email" placeholder="留空则用系统默认">
+            </label>
+            <label>
               <span>邮箱域名覆盖</span>
-              <small>当前任务临时改邮箱后缀时再填；DuckMail 留空会自动选域名。</small>
+              <small>当前任务临时改邮箱后缀时再填。</small>
               <input name="temp_mail_domain" placeholder="留空则用系统默认">
             </label>
             <label>
-              <span>邮箱管理口令 / DuckMail API Key 覆盖</span>
-              <small>当前任务临时改 Temp Mail 口令或 DuckMail API Key 时再填。</small>
-              <input name="temp_mail_admin_password" placeholder="留空则用系统默认">
+              <span>管理员密码覆盖</span>
+              <small>当前任务临时改管理员密码时再填。</small>
+              <input name="temp_mail_admin_password" type="password" placeholder="留空则用系统默认">
             </label>
             <label>
               <span>站点密码覆盖</span>
-              <small>只有这个任务要额外站点鉴权时再填。</small>
-              <input name="temp_mail_site_password" placeholder="留空则用系统默认">
+              <small>仅旧版 generic provider 使用。</small>
+              <input name="temp_mail_site_password" type="password" placeholder="留空则用系统默认">
             </label>
             <label>
               <span>Token 上传接口覆盖</span>

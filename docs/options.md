@@ -39,27 +39,42 @@
 
 ## temp_mail_api_base
 
-临时邮箱服务的接口地址。
+邮箱服务的接口地址。
 
 示例：
 
-- `https://mail-api.example.com`
-- `https://api.duckmail.sbs`
+- `https://doc.skymail.ink`（Cloud Mail）
+- `https://api.duckmail.sbs`（DuckMail）
+- `https://mail-api.example.com`（自定义 Temp Mail）
 
-执行器会调用它创建邮箱地址、列出邮件、读取邮件正文。
+执行器会根据 `temp_mail_provider` 选择对应的接口调用方式。不同 provider 的接口契约不同，详见 [temp-mail-api.md](temp-mail-api.md)。
 
-如果你要自己实现这套接口，直接看 [temp-mail-api.md](temp-mail-api.md)。
+## temp_mail_provider
+
+选择邮箱后端类型。可选值：
+
+- `mailbox_system`：Cloud Mail 系统，使用 `genToken` / `addUser` / `emailList` 接口
+- `duckmail`：DuckMail，使用 `/accounts` / `/token` / `/messages` 接口
+- `generic`：旧版 Temp Mail，使用 `/admin/new_address` / `/api/mails` 接口
+- 留空：自动检测（根据 API base URL 的 hostname 判断）
+
+## temp_mail_admin_email
+
+管理员邮箱，用于 Cloud Mail (`mailbox_system`) 的 `genToken` 接口。
+
+如果你用的是 `mailbox_system`，这个字段必填。
+
+DuckMail 和 generic provider 不需要此字段。
 
 ## temp_mail_admin_password
 
-临时邮箱后台管理口令，用于创建新邮箱地址。
+邮箱后台管理口令。
 
-如果你用的是自定义 Temp Mail，这个字段必填。
+不同 provider 的含义：
 
-如果你用的是 DuckMail：
-
-- 公共域名场景下可以留空
-- 需要访问私有域名时再填 DuckMail API Key
+- `mailbox_system`：管理员密码，用于 `genToken` 接口获取 token
+- DuckMail：可留空（公共域名）；私有域名场景填 API Key
+- generic：必填，创建邮箱时放在 `x-admin-auth` 头里
 
 ## temp_mail_domain
 
@@ -71,14 +86,13 @@
 
 这个字段很关键。就算邮箱 API 可用，如果这个域名本身被 `x.ai` 拒绝，流程也会卡在注册页。
 
-如果你用的是 DuckMail：
-
-- 可以显式填写你想用的域名
-- 也可以留空，执行器会自动从 DuckMail 域名列表里挑一个公开、已验证域名
+- `mailbox_system`：必填
+- DuckMail：可留空，执行器会自动从 DuckMail 域名列表里挑一个公开、已验证域名
+- generic：必填
 
 ## temp_mail_site_password
 
-有些临时邮箱 API 除了管理口令，还会要求站点级鉴权；如果你的接口没有这个要求，留空即可。
+仅旧版 generic provider 使用。如果你的接口没有站点级鉴权要求，留空即可。`mailbox_system` 和 DuckMail 可忽略此字段。
 
 ## api.endpoint
 

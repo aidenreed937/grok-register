@@ -1,6 +1,7 @@
 
 from __future__ import annotations
 
+import base64
 import json
 import random
 import re
@@ -43,10 +44,12 @@ TEMP_MAIL_ADMIN_PASSWORD = str(
     or _conf.get("duckmail_bearer")
     or ""
 )
+TEMP_MAIL_ADMIN_EMAIL = str(_conf.get("temp_mail_admin_email") or "")
 TEMP_MAIL_DOMAIN = str(_conf.get("temp_mail_domain") or _conf.get("duckmail_domain") or "")
 TEMP_MAIL_SITE_PASSWORD = str(_conf.get("temp_mail_site_password", ""))
 PROXY = str(_conf.get("proxy", ""))
 TEMP_MAIL_PROVIDER = str(_conf.get("temp_mail_provider") or "").strip().lower()
+_MAILBOX_SYSTEM_ADMIN_TOKEN = ""
 
 # ============================================================
 # 适配层：为 DrissionPage_example.py 提供简单接口
@@ -87,6 +90,8 @@ def get_oai_code(dev_token: str, email: str, timeout: int = 30) -> Optional[str]
 
 
 def _detect_mail_provider(api_base: str) -> str:
+    if TEMP_MAIL_PROVIDER in {"mailbox_system", "mailbox-system", "mailbox"}:
+        return "mailbox_system"
     if TEMP_MAIL_PROVIDER in {"duckmail", "temp-mail", "temp_mail", "generic"}:
         return "duckmail" if TEMP_MAIL_PROVIDER == "duckmail" else "generic"
     hostname = (urlparse(api_base).hostname or "").lower()
@@ -96,7 +101,12 @@ def _detect_mail_provider(api_base: str) -> str:
 
 
 def _provider_label() -> str:
-    return "DuckMail" if _detect_mail_provider(TEMP_MAIL_API_BASE) == "duckmail" else "Temp Mail"
+    provider = _detect_mail_provider(TEMP_MAIL_API_BASE)
+    if provider == "duckmail":
+        return "DuckMail"
+    if provider == "mailbox_system":
+        return "Mailbox System"
+    return "Temp Mail"
 
 def _create_session():
     """创建请求会话（优先 curl_cffi）。"""
@@ -159,6 +169,10 @@ def _build_duckmail_headers(token: str = "") -> Dict[str, str]:
     return headers
 
 
+def _build_mailbox_system_headers(token: str) -> Dict[str, str]:
+    return {"Authorization": f"{token}"}
+
+
 def _extract_duckmail_token(payload: Dict[str, Any]) -> str:
     for key in ("token", "jwt", "access_token", "id_token"):
         value = payload.get(key)
@@ -173,6 +187,182 @@ def _extract_duckmail_domain_name(item: Dict[str, Any]) -> str:
         if value:
             return str(value)
     return ""
+
+
+# ============================================================
+# Mailbox System (Cloud Mail) helpers
+# ============================================================
+
+def _encode_mailbox_system_token(email: str) -> str:
+    payload = json.dumps({"p": "mailbox_system", "e": email}, separators=(",", ":"))
+    return base64.b64encode(payload.encode()).decode()
+
+
+def _decode_mailbox_system_token(token: str) -> str:
+    try:
+        payload = json.loads(base64.b64decode(token).decode())
+        return payload.get("e", "")
+    except Exception:
+        return ""
+
+
+def _get_mailbox_system_admin_token(force_refresh: bool = False) -> str:
+    global _MAILBOX_SYSTEM_ADMIN_TOKEN
+    if _MAILBOX_SYSTEM_ADMIN_TOKEN and not force_refresh:
+        return _MAILBOX_SYSTEM_ADMIN_TOKEN
+
+    api_base = TEMP_MAIL_API_BASE.rstrip("/")
+    session, use_cffi = _create_session()
+    res = _do_request(
+        session,
+        use_cffi,
+        "post",
+        f"{api_base}/api/public/genToken",
+        json={"email": TEMP_MAIL_ADMIN_EMAIL, "password": TEMP_MAIL_ADMIN_PASSWORD},
+        timeout=20,
+    )
+    if res.status_code != 200:
+        raise Exception(f"Mailbox System 获取 token 失败: {res.status_code} - {res.text[:200]}")
+
+    data = res.json()
+    token = ""
+    if isinstance(data, dict):
+        inner = data.get("data")
+        if isinstance(inner, dict):
+            token = str(inner.get("token") or "")
+        if not token:
+            token = str(data.get("token") or "")
+    if not token:
+        raise Exception(f"Mailbox System genToken 未返回 token: {data}")
+    _MAILBOX_SYSTEM_ADMIN_TOKEN = token
+    return token
+
+
+def _create_mailbox_system_email() -> Tuple[str, str, str]:
+    if not TEMP_MAIL_DOMAIN:
+        raise Exception("temp_mail_domain 未设置，mailbox_system 需要指定邮箱域名")
+    if not TEMP_MAIL_ADMIN_EMAIL:
+        raise Exception("temp_mail_admin_email 未设置，mailbox_system 需要管理员邮箱")
+    if not TEMP_MAIL_ADMIN_PASSWORD:
+        raise Exception("temp_mail_admin_password 未设置，mailbox_system 需要管理员密码")
+
+    api_base = TEMP_MAIL_API_BASE.rstrip("/")
+    admin_token = _get_mailbox_system_admin_token()
+    session, use_cffi = _create_session()
+    last_error = ""
+
+    for _ in range(5):
+        email_local = _generate_local_part(random.randint(8, 12))
+        email = f"{email_local}@{TEMP_MAIL_DOMAIN}"
+        password = _generate_mail_password()
+
+        res = _do_request(
+            session,
+            use_cffi,
+            "post",
+            f"{api_base}/api/public/addUser",
+            json={"list": [{"email": email, "password": password}]},
+            headers=_build_mailbox_system_headers(admin_token),
+            timeout=20,
+        )
+        if res.status_code in {200, 201}:
+            opaque_token = _encode_mailbox_system_token(email)
+            print(f"[*] Mailbox System 临时邮箱创建成功: {email}")
+            return email, password, opaque_token
+
+        if res.status_code in {401, 403}:
+            try:
+                admin_token = _get_mailbox_system_admin_token(force_refresh=True)
+            except Exception:
+                pass
+            last_error = f"{res.status_code} - {res.text[:200]}"
+            continue
+
+        if res.status_code in {409, 422}:
+            last_error = f"{res.status_code} - {res.text[:200]}"
+            continue
+
+        raise Exception(f"Mailbox System 创建邮箱失败: {res.status_code} - {res.text[:200]}")
+
+    raise Exception(f"Mailbox System 创建邮箱失败，重试后仍冲突: {last_error}")
+
+
+def _fetch_mailbox_system_emails(mail_token: str) -> List[Dict[str, Any]]:
+    target_email = _decode_mailbox_system_token(mail_token)
+    if not target_email:
+        return []
+
+    api_base = TEMP_MAIL_API_BASE.rstrip("/")
+    admin_token = _get_mailbox_system_admin_token()
+    session, use_cffi = _create_session()
+
+    res = _do_request(
+        session,
+        use_cffi,
+        "post",
+        f"{api_base}/api/public/emailList",
+        json={
+            "toEmail": target_email,
+            "type": 0,
+            "isDel": 0,
+            "timeSort": "desc",
+            "num": 1,
+            "size": 20,
+        },
+        headers=_build_mailbox_system_headers(admin_token),
+        timeout=20,
+    )
+    if res.status_code in {401, 403}:
+        try:
+            admin_token = _get_mailbox_system_admin_token(force_refresh=True)
+            res = _do_request(
+                session,
+                use_cffi,
+                "post",
+                f"{api_base}/api/public/emailList",
+                json={
+                    "toEmail": target_email,
+                    "type": 0,
+                    "isDel": 0,
+                    "timeSort": "desc",
+                    "num": 1,
+                    "size": 20,
+                },
+                headers=_build_mailbox_system_headers(admin_token),
+                timeout=20,
+            )
+        except Exception:
+            return []
+    if res.status_code != 200:
+        return []
+
+    data = res.json()
+    raw_list: List[Dict[str, Any]] = []
+    if isinstance(data, dict):
+        raw_list = data.get("data") or data.get("results") or []
+    elif isinstance(data, list):
+        raw_list = data
+
+    normalized: List[Dict[str, Any]] = []
+    for item in raw_list:
+        if not isinstance(item, dict):
+            continue
+        to = (item.get("toEmail") or "").lower()
+        if target_email.lower() != to:
+            continue
+        if item.get("isDel") and item.get("isDel") != 0:
+            continue
+        normalized.append({
+            "id": str(item.get("emailId", "")),
+            "subject": item.get("subject", ""),
+            "text": item.get("text", ""),
+            "html": item.get("content", ""),
+            "content": item.get("content", ""),
+            "toEmail": item.get("toEmail", ""),
+            "sendEmail": item.get("sendEmail", ""),
+            "createTime": item.get("createTime", ""),
+        })
+    return normalized
 
 
 def _resolve_duckmail_domain(session, use_cffi, api_base: str) -> str:
@@ -289,6 +479,11 @@ def create_temp_email() -> Tuple[str, str, str]:
             return _create_duckmail_email()
         except Exception as e:
             raise Exception(f"DuckMail 临时邮箱创建失败: {e}")
+    if provider == "mailbox_system":
+        try:
+            return _create_mailbox_system_email()
+        except Exception as e:
+            raise Exception(f"Mailbox System 临时邮箱创建失败: {e}")
 
     if not TEMP_MAIL_ADMIN_PASSWORD:
         raise Exception("temp_mail_admin_password 未设置，无法创建临时邮箱")
@@ -353,9 +548,15 @@ def _fetch_duckmail_emails(mail_token: str) -> List[Dict[str, Any]]:
 
 def fetch_emails(mail_token: str) -> List[Dict[str, Any]]:
     """获取邮件列表。"""
-    if _detect_mail_provider(TEMP_MAIL_API_BASE) == "duckmail":
+    provider = _detect_mail_provider(TEMP_MAIL_API_BASE)
+    if provider == "duckmail":
         try:
             return _fetch_duckmail_emails(mail_token)
+        except Exception:
+            return []
+    if provider == "mailbox_system":
+        try:
+            return _fetch_mailbox_system_emails(mail_token)
         except Exception:
             return []
 
@@ -429,11 +630,21 @@ def _fetch_duckmail_email_detail(mail_token: str, msg_id: str) -> Optional[Dict[
 
 def fetch_email_detail(mail_token: str, msg_id: str) -> Optional[Dict[str, Any]]:
     """获取单封邮件详情。"""
-    if _detect_mail_provider(TEMP_MAIL_API_BASE) == "duckmail":
+    provider = _detect_mail_provider(TEMP_MAIL_API_BASE)
+    if provider == "duckmail":
         try:
             return _fetch_duckmail_email_detail(mail_token, msg_id)
         except Exception:
             return None
+    if provider == "mailbox_system":
+        try:
+            msgs = _fetch_mailbox_system_emails(mail_token)
+            for msg in msgs:
+                if str(msg.get("id")) == str(msg_id):
+                    return msg
+        except Exception:
+            pass
+        return None
 
     try:
         api_base = TEMP_MAIL_API_BASE.rstrip("/")
@@ -466,7 +677,7 @@ def wait_for_verification_code(mail_token: str, timeout: int = 120) -> Optional[
         for msg in messages:
             if not isinstance(msg, dict):
                 continue
-            msg_id = msg.get("id")
+            msg_id = str(msg.get("id") or "")
             if not msg_id or msg_id in seen_ids:
                 continue
             seen_ids.add(msg_id)
@@ -496,11 +707,12 @@ def _stringify_mail_part(value: Any) -> str:
 
 
 def _extract_mail_content(detail: Dict[str, Any]) -> str:
-    """兼容 text/html/raw MIME 三种内容来源。"""
+    """兼容 text/html/content/raw MIME 四种内容来源。"""
     direct_parts = [
         detail.get("subject"),
         detail.get("text"),
         detail.get("html"),
+        detail.get("content"),
         detail.get("raw"),
         detail.get("source"),
     ]

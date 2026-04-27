@@ -150,8 +150,10 @@ def load_source_defaults() -> dict[str, Any]:
                 "browser_proxy": "",
                 "temp_mail_api_base": "",
                 "temp_mail_admin_password": "",
+                "temp_mail_admin_email": "",
                 "temp_mail_domain": "",
                 "temp_mail_site_password": "",
+                "temp_mail_provider": "",
                 "api": {"endpoint": "", "token": "", "append": True},
             }
 
@@ -167,8 +169,10 @@ def load_source_defaults() -> dict[str, Any]:
         "browser_proxy": "GROK_REGISTER_DEFAULT_BROWSER_PROXY",
         "temp_mail_api_base": "GROK_REGISTER_DEFAULT_TEMP_MAIL_API_BASE",
         "temp_mail_admin_password": "GROK_REGISTER_DEFAULT_TEMP_MAIL_ADMIN_PASSWORD",
+        "temp_mail_admin_email": "GROK_REGISTER_DEFAULT_TEMP_MAIL_ADMIN_EMAIL",
         "temp_mail_domain": "GROK_REGISTER_DEFAULT_TEMP_MAIL_DOMAIN",
         "temp_mail_site_password": "GROK_REGISTER_DEFAULT_TEMP_MAIL_SITE_PASSWORD",
+        "temp_mail_provider": "GROK_REGISTER_DEFAULT_TEMP_MAIL_PROVIDER",
     }
     for key, env_name in env_map.items():
         value = os.getenv(env_name)
@@ -335,13 +339,14 @@ def run_health_checks() -> dict[str, Any]:
                 )
             )
 
+    temp_mail_provider = str(defaults.get("temp_mail_provider", "") or "").strip().lower()
     if not temp_mail_api_base:
         items.append(
             _build_health_item(
                 "temp_mail",
-                "Temp Mail API",
+                "Mailbox API",
                 False,
-                "未配置临时邮箱 API",
+                "未配置邮箱 API",
                 "当前系统默认配置里没有 `temp_mail_api_base`，注册流程会在创建邮箱阶段直接失败。",
                 "-",
             )
@@ -354,13 +359,18 @@ def run_health_checks() -> dict[str, Any]:
                 timeout=15,
             )
             ok = response.status_code < 500
+            extra = ""
+            if temp_mail_provider == "mailbox_system":
+                admin_email = str(defaults.get("temp_mail_admin_email", "") or "").strip()
+                if not admin_email:
+                    extra = " Provider 设为 `mailbox_system` 但未填写 `temp_mail_admin_email`。"
             items.append(
                 _build_health_item(
                     "temp_mail",
-                    "Temp Mail API",
+                    "Mailbox API",
                     ok,
                     f"HTTP {response.status_code}",
-                    "接口地址可达。这里只做基础连通性检查，不会真的创建邮箱地址。",
+                    f"接口地址可达。这里只做基础连通性检查，不会真的创建邮箱地址。{extra}",
                     temp_mail_api_base,
                 )
             )
@@ -368,7 +378,7 @@ def run_health_checks() -> dict[str, Any]:
             items.append(
                 _build_health_item(
                     "temp_mail",
-                    "Temp Mail API",
+                    "Mailbox API",
                     False,
                     "接口不可达",
                     f"访问 `{temp_mail_api_base}` 失败：{exc}",
@@ -423,8 +433,10 @@ class TaskCreate(BaseModel):
     browser_proxy: str | None = None
     temp_mail_api_base: str | None = None
     temp_mail_admin_password: str | None = None
+    temp_mail_admin_email: str | None = None
     temp_mail_domain: str | None = None
     temp_mail_site_password: str | None = None
+    temp_mail_provider: str | None = None
     api_endpoint: str | None = None
     api_token: str | None = None
     api_append: bool | None = None
@@ -436,8 +448,10 @@ class SystemSettings(BaseModel):
     browser_proxy: str = ""
     temp_mail_api_base: str = ""
     temp_mail_admin_password: str = ""
+    temp_mail_admin_email: str = ""
     temp_mail_domain: str = ""
     temp_mail_site_password: str = ""
+    temp_mail_provider: str = ""
     api_endpoint: str = ""
     api_token: str = ""
     api_append: bool = True
@@ -481,7 +495,7 @@ def merged_defaults() -> dict[str, Any]:
         base["proxy"] = str(saved.get("proxy", ""))
     if saved.get("browser_proxy") is not None:
         base["browser_proxy"] = str(saved.get("browser_proxy", ""))
-    for key in ("temp_mail_api_base", "temp_mail_admin_password", "temp_mail_domain", "temp_mail_site_password"):
+    for key in ("temp_mail_api_base", "temp_mail_admin_password", "temp_mail_admin_email", "temp_mail_domain", "temp_mail_site_password", "temp_mail_provider"):
         if key in saved:
             base[key] = str(saved.get(key, ""))
     api_base = dict(base.get("api") or {})
@@ -504,8 +518,10 @@ def build_task_config(payload: TaskCreate) -> dict[str, Any]:
         "browser_proxy": defaults.get("browser_proxy", "") if payload.browser_proxy is None else payload.browser_proxy.strip(),
         "temp_mail_api_base": defaults.get("temp_mail_api_base", "") if payload.temp_mail_api_base is None else payload.temp_mail_api_base.strip(),
         "temp_mail_admin_password": defaults.get("temp_mail_admin_password", "") if payload.temp_mail_admin_password is None else payload.temp_mail_admin_password.strip(),
+        "temp_mail_admin_email": defaults.get("temp_mail_admin_email", "") if payload.temp_mail_admin_email is None else payload.temp_mail_admin_email.strip(),
         "temp_mail_domain": defaults.get("temp_mail_domain", "") if payload.temp_mail_domain is None else payload.temp_mail_domain.strip(),
         "temp_mail_site_password": defaults.get("temp_mail_site_password", "") if payload.temp_mail_site_password is None else payload.temp_mail_site_password.strip(),
+        "temp_mail_provider": defaults.get("temp_mail_provider", "") if payload.temp_mail_provider is None else payload.temp_mail_provider.strip(),
         "api": {
             "endpoint": api_defaults.get("endpoint", "") if payload.api_endpoint is None else payload.api_endpoint.strip(),
             "token": api_defaults.get("token", "") if payload.api_token is None else payload.api_token.strip(),

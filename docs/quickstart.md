@@ -80,12 +80,23 @@ cp config.example.json config.json
 
 把下面这些替换成你自己的值：
 
+- `temp_mail_provider`
 - `temp_mail_api_base`
+- `temp_mail_admin_email`
 - `temp_mail_admin_password`
 - `temp_mail_domain`
 
-如果你准备用 DuckMail，推荐直接填：
+推荐使用 Cloud Mail (mailbox_system)：
 
+- `temp_mail_provider`: `mailbox_system`
+- `temp_mail_api_base`: 你的 Cloud Mail 接口地址
+- `temp_mail_admin_email`: 管理员邮箱
+- `temp_mail_admin_password`: 管理员密码
+- `temp_mail_domain`: 注册用邮箱域名
+
+如果你准备用 DuckMail：
+
+- `temp_mail_provider`: `duckmail`
 - `temp_mail_api_base`: `https://api.duckmail.sbs`
 - `temp_mail_admin_password`: 公共域名场景可留空；只有要访问私有域名时才需要填 DuckMail API Key
 - `temp_mail_domain`: 可留空；留空时执行器会自动从 DuckMail 域名列表里选择一个公开、已验证域名

@@ -37,8 +37,10 @@
     settingsFormEl.elements.proxy.value = defaults.proxy || "";
     settingsFormEl.elements.browser_proxy.value = defaults.browser_proxy || "";
     settingsFormEl.elements.temp_mail_api_base.value = defaults.temp_mail_api_base || "";
-    settingsFormEl.elements.temp_mail_admin_password.value = defaults.temp_mail_admin_password || "";
+    settingsFormEl.elements.temp_mail_provider.value = defaults.temp_mail_provider || "";
+    settingsFormEl.elements.temp_mail_admin_email.value = defaults.temp_mail_admin_email || "";
     settingsFormEl.elements.temp_mail_domain.value = defaults.temp_mail_domain || "";
+    settingsFormEl.elements.temp_mail_admin_password.value = defaults.temp_mail_admin_password || "";
     settingsFormEl.elements.temp_mail_site_password.value = defaults.temp_mail_site_password || "";
     settingsFormEl.elements.api_endpoint.value = defaults.api?.endpoint || "";
     settingsFormEl.elements.api_token.value = defaults.api?.token || "";
@@ -146,10 +148,12 @@
 
     const cfg = task.config || {};
     detailMetaEl.innerHTML = [
+      ["邮箱 Provider", cfg.temp_mail_provider || "自动检测"],
       ["邮箱 API Base", cfg.temp_mail_api_base || "-"],
+      ["管理员邮箱", cfg.temp_mail_admin_email || "-"],
       ["邮箱域名", cfg.temp_mail_domain || "-"],
-      ["邮箱管理密码", cfg.temp_mail_admin_password || "-"],
-      ["站点密码", cfg.temp_mail_site_password || "-"],
+      ["管理员密码", cfg.temp_mail_admin_password ? "******" : "-"],
+      ["站点密码", cfg.temp_mail_site_password ? "******" : "-"],
       ["请求代理", cfg.proxy || "-"],
       ["浏览器代理", cfg.browser_proxy || "-"],
       ["最近邮箱", task.last_email || "-"],
@@ -224,8 +228,10 @@
       proxy: formEl.elements.proxy.value.trim() || null,
       browser_proxy: formEl.elements.browser_proxy.value.trim() || null,
       temp_mail_api_base: formEl.elements.temp_mail_api_base.value.trim() || null,
-      temp_mail_admin_password: formEl.elements.temp_mail_admin_password.value.trim() || null,
+      temp_mail_provider: formEl.elements.temp_mail_provider.value.trim() || null,
+      temp_mail_admin_email: formEl.elements.temp_mail_admin_email.value.trim() || null,
       temp_mail_domain: formEl.elements.temp_mail_domain.value.trim() || null,
+      temp_mail_admin_password: formEl.elements.temp_mail_admin_password.value.trim() || null,
       temp_mail_site_password: formEl.elements.temp_mail_site_password.value.trim() || null,
       api_endpoint: formEl.elements.api_endpoint.value.trim() || null,
       api_token: formEl.elements.api_token.value.trim() || null,
@@ -269,8 +275,10 @@
       proxy: settingsFormEl.elements.proxy.value.trim(),
       browser_proxy: settingsFormEl.elements.browser_proxy.value.trim(),
       temp_mail_api_base: settingsFormEl.elements.temp_mail_api_base.value.trim(),
-      temp_mail_admin_password: settingsFormEl.elements.temp_mail_admin_password.value.trim(),
+      temp_mail_provider: settingsFormEl.elements.temp_mail_provider.value.trim(),
+      temp_mail_admin_email: settingsFormEl.elements.temp_mail_admin_email.value.trim(),
       temp_mail_domain: settingsFormEl.elements.temp_mail_domain.value.trim(),
+      temp_mail_admin_password: settingsFormEl.elements.temp_mail_admin_password.value.trim(),
       temp_mail_site_password: settingsFormEl.elements.temp_mail_site_password.value.trim(),
       api_endpoint: settingsFormEl.elements.api_endpoint.value.trim(),
       api_token: settingsFormEl.elements.api_token.value.trim(),
