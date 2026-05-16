@@ -1,0 +1,10 @@
+.git
+.github
+runtime
+logs
+sso
+chrome_data
+node_modules
+apps/console/runtime
+apps/console/.venv
+vendor/grok2api

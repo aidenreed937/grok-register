@@ -19,10 +19,7 @@ services:
       - warp
 
   grok2api:
-    build:
-      context: ./vendor/grok2api
-      dockerfile: Dockerfile
-    image: grok2api-upstream:latest
+    image: ghcr.io/${GHCR_OWNER:?Set GHCR_OWNER in .env}/grok-register-grok2api:${GROK_REGISTER_IMAGE_TAG:-latest}
     environment:
       TZ: Asia/Shanghai
       DATA_DIR: /app/data
@@ -43,9 +40,7 @@ services:
       - flaresolverr
 
   console:
-    build:
-      context: .
-      dockerfile: apps/worker-runtime/Dockerfile
+    image: ghcr.io/${GHCR_OWNER:?Set GHCR_OWNER in .env}/grok-register-console:${GROK_REGISTER_IMAGE_TAG:-latest}
     working_dir: /workspace
     command: python /workspace/apps/console/app.py
     environment:
@@ -63,7 +58,7 @@ services:
     ports:
       - "${GROK_STACK_CONSOLE_PORT:-18600}:18600"
     volumes:
-      - .:/workspace
+      - ./runtime/console:/workspace/apps/console/runtime
     restart: unless-stopped
     depends_on:
       - grok2api

@@ -47,4 +47,8 @@ COPY apps/console/requirements.txt /tmp/console-requirements.txt
 RUN pip install --no-cache-dir -r /tmp/requirements.txt
 RUN pip install --no-cache-dir -r /tmp/console-requirements.txt
 
+COPY DrissionPage_example.py email_register.py config.example.json /workspace/
+COPY turnstilePatch /workspace/turnstilePatch
+COPY apps/console /workspace/apps/console
+
 CMD ["bash"]
