@@ -1087,7 +1087,7 @@ def push_sso_to_api(new_tokens: list):
             conf = json.load(f)
     except Exception as e:
         print(f"[Warn] 读取 config.json 失败，跳过推送: {e}")
-        return
+        return False
 
     api_conf = conf.get("api", {})
     endpoint = str(api_conf.get("endpoint", "")).strip()
@@ -1095,7 +1095,7 @@ def push_sso_to_api(new_tokens: list):
     append_mode = api_conf.get("append", True)
 
     if not endpoint or not api_token:
-        return
+        return False
 
     headers = {
         "Authorization": f"Bearer {api_token}",
@@ -1103,6 +1103,8 @@ def push_sso_to_api(new_tokens: list):
     }
 
     tokens_to_push = [t for t in new_tokens if t]
+    if not tokens_to_push:
+        return True
 
     if append_mode:
         try:
@@ -1130,10 +1132,10 @@ def push_sso_to_api(new_tokens: list):
                 print(f"[*] 查询到线上 {len(existing_tokens)} 个 token，合并本次 {len(new_tokens)} 个，共 {len(deduped)} 个")
             else:
                 print(f"[Error] 查询线上 token 失败: HTTP {get_resp.status_code}，放弃推送以保护存量数据")
-                return
+                return False
         except Exception as e:
             print(f"[Error] 查询线上 token 异常: {e}，放弃推送以保护存量数据")
-            return
+            return False
 
     try:
         resp = requests.post(
@@ -1145,10 +1147,13 @@ def push_sso_to_api(new_tokens: list):
         )
         if resp.status_code == 200:
             print(f"[*] SSO token 已推送到 API（共 {len(tokens_to_push)} 个）: {endpoint}")
+            return True
         else:
             print(f"[Warn] 推送 API 返回异常: HTTP {resp.status_code} {resp.text[:200]}")
+            return False
     except Exception as e:
         print(f"[Warn] 推送 API 失败: {e}")
+        return False
 
 
 def run_single_registration(output_path=DEFAULT_SSO_FILE, extract_numbers=False):
@@ -1211,7 +1216,7 @@ def main():
     args = parser.parse_args()
 
     current_round = 0
-    collected_sso: list = []
+    pending_sso: list = []
     try:
         start_browser()
         while True:
@@ -1224,7 +1229,11 @@ def main():
 
             try:
                 result = run_single_registration(args.output, extract_numbers=args.extract_numbers)
-                collected_sso.append(result["sso"])
+                sso_value = result["sso"]
+                pending_sso.append(sso_value)
+                print("\n[*] 本轮注册成功，立即推送 1 个 token 到 API...")
+                if push_sso_to_api([sso_value]):
+                    pending_sso.remove(sso_value)
                 round_succeeded = True
             except KeyboardInterrupt:
                 print("\n[Info] 收到中断信号，停止后续轮次。")
@@ -1238,9 +1247,9 @@ def main():
                 time.sleep(2)
 
     finally:
-        if collected_sso:
-            print(f"\n[*] 注册完成，推送 {len(collected_sso)} 个 token 到 API...")
-            push_sso_to_api(collected_sso)
+        if pending_sso:
+            print(f"\n[*] 注册结束，补推 {len(pending_sso)} 个未同步 token 到 API...")
+            push_sso_to_api(pending_sso)
 
         stop_browser()
 
