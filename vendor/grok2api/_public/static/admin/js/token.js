@@ -31,6 +31,11 @@ function setText(id, text) {
   if (el) el.innerText = text;
 }
 
+function tOr(key, params, fallback) {
+  const value = t(key, params);
+  return value === key ? fallback : value;
+}
+
 function openModal(id) {
   const modal = byId(id);
   if (!modal) return null;
@@ -1163,8 +1168,16 @@ function updateBatchProgress() {
       token: batchCurrentToken
     };
     text.textContent = batchCurrentToken
-      ? t('token.cpaExportProgressWithToken', progress)
-      : t('token.cpaExportProgress', progress);
+      ? tOr(
+          'token.cpaExportProgressWithToken',
+          progress,
+          `CPA ${batchProcessed}/${batchTotal}，成功 ${batchOk}，失败 ${batchFail}，当前 ${batchCurrentToken}`
+        )
+      : tOr(
+          'token.cpaExportProgress',
+          progress,
+          `CPA ${batchProcessed}/${batchTotal}，成功 ${batchOk}，失败 ${batchFail}`
+        );
   } else {
     const pct = batchTotal ? Math.floor((batchProcessed / batchTotal) * 100) : 0;
     text.textContent = `${pct}%`;
