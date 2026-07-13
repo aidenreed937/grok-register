@@ -1,9 +1,13 @@
 import asyncio
+import json
 import re
+import zipfile
+from datetime import datetime
+from io import BytesIO
 
 import orjson
 from fastapi import APIRouter, Depends, HTTPException, Request
-from fastapi.responses import StreamingResponse
+from fastapi.responses import Response, StreamingResponse
 
 from app.core.auth import get_app_key, verify_app_key
 from app.core.batch import create_task, expire_task, get_task
@@ -11,6 +15,7 @@ from app.core.logger import logger
 from app.core.storage import get_storage
 from app.services.grok.batch_services.usage import UsageService
 from app.services.grok.batch_services.nsfw import NSFWService
+from app.services.token.cpa_export import CpaExportError, sso_to_cpa_entry
 from app.services.token.manager import get_token_manager
 
 router = APIRouter()
@@ -165,6 +170,78 @@ async def refresh_tokens(data: dict):
         return response
     except Exception as e:
         raise HTTPException(status_code=500, detail=str(e))
+
+
+@router.post("/tokens/export/cpa", dependencies=[Depends(verify_app_key)])
+async def export_cpa_tokens(data: dict):
+    """将选中的 SSO token 导出为 cli-proxy-api xAI OAuth 文件 zip。"""
+    tokens = []
+    if isinstance(data.get("token"), str) and data["token"].strip():
+        tokens.append(data["token"].strip())
+    if isinstance(data.get("tokens"), list):
+        tokens.extend([str(t).strip() for t in data["tokens"] if str(t).strip()])
+
+    unique_tokens = list(dict.fromkeys(_sanitize_token_text(t) for t in tokens if t))
+    unique_tokens = [t for t in unique_tokens if t]
+    if not unique_tokens:
+        raise HTTPException(status_code=400, detail="No tokens provided")
+
+    try:
+        max_retries = int(data.get("retries") or 8)
+    except (TypeError, ValueError):
+        max_retries = 8
+    max_retries = min(max(1, max_retries), 20)
+
+    zip_buffer = BytesIO()
+    successes = []
+    failures = []
+    used_names = set()
+
+    with zipfile.ZipFile(zip_buffer, "w", compression=zipfile.ZIP_DEFLATED) as zf:
+        for index, token in enumerate(unique_tokens, 1):
+            try:
+                filename, entry = await asyncio.to_thread(
+                    sso_to_cpa_entry,
+                    token,
+                    "",
+                    max_retries,
+                )
+                if filename in used_names:
+                    stem, suffix = filename.rsplit(".", 1)
+                    filename = f"{stem}-{index}.{suffix}"
+                used_names.add(filename)
+                zf.writestr(
+                    filename,
+                    json.dumps(entry, separators=(",", ":"), ensure_ascii=False),
+                )
+                successes.append({"token": token[:8] + "..." + token[-8:], "file": filename})
+            except CpaExportError as exc:
+                failures.append({"token": token[:8] + "..." + token[-8:], "error": str(exc)})
+            except Exception as exc:
+                failures.append({"token": token[:8] + "..." + token[-8:], "error": str(exc)})
+
+        zf.writestr(
+            "export-summary.json",
+            json.dumps(
+                {
+                    "total": len(unique_tokens),
+                    "success": len(successes),
+                    "failed": len(failures),
+                    "files": successes,
+                    "failures": failures,
+                },
+                indent=2,
+                ensure_ascii=False,
+            ),
+        )
+
+    if not successes:
+        detail = failures[0]["error"] if failures else "CPA export failed"
+        raise HTTPException(status_code=502, detail=detail)
+
+    filename = f"cpa_export_{datetime.utcnow().strftime('%Y%m%d_%H%M%S')}.zip"
+    headers = {"Content-Disposition": f'attachment; filename="{filename}"'}
+    return Response(zip_buffer.getvalue(), media_type="application/zip", headers=headers)
 
 
 @router.post("/tokens/refresh/async", dependencies=[Depends(verify_app_key)])

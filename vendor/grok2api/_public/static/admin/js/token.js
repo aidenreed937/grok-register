@@ -50,6 +50,10 @@ function closeModal(id, onClose) {
 
 function downloadTextFile(content, filename) {
   const blob = new Blob([content], { type: 'text/plain' });
+  downloadBlob(blob, filename);
+}
+
+function downloadBlob(blob, filename) {
   const url = window.URL.createObjectURL(blob);
   const a = document.createElement('a');
   a.href = url;
@@ -522,6 +526,60 @@ function batchExport() {
   if (selected.length === 0) return showToast(t('common.noTokenSelected'), 'error');
   const content = selected.map(t => t.token).join('\n') + '\n';
   downloadTextFile(content, `tokens_export_selected_${new Date().toISOString().slice(0, 10)}.txt`);
+}
+
+async function batchExportCPA() {
+  if (isBatchProcessing) {
+    showToast(t('common.taskInProgress'), 'info');
+    return;
+  }
+  const selected = getSelectedTokens();
+  if (selected.length === 0) return showToast(t('common.noTokenSelected'), 'error');
+
+  isBatchProcessing = true;
+  batchTotal = selected.length;
+  batchProcessed = 0;
+  const progressText = byId('batch-progress-text');
+  if (progressText) progressText.textContent = t('token.cpaExportRunning', { count: selected.length });
+  const progress = byId('batch-progress');
+  if (progress) progress.classList.remove('hidden');
+  setActionButtonsState(selected.length);
+
+  try {
+    const res = await fetch('/v1/admin/tokens/export/cpa', {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json',
+        ...buildAuthHeaders(apiKey)
+      },
+      body: JSON.stringify({ tokens: selected.map(t => t.token) })
+    });
+
+    if (!res.ok) {
+      let message = `HTTP ${res.status}`;
+      try {
+        const data = await res.json();
+        message = data.detail || message;
+      } catch (_) {}
+      throw new Error(message);
+    }
+
+    const blob = await res.blob();
+    const disposition = res.headers.get('Content-Disposition') || '';
+    const match = disposition.match(/filename="?([^"]+)"?/i);
+    const filename = match ? match[1] : `cpa_export_${new Date().toISOString().slice(0, 10)}.zip`;
+    downloadBlob(blob, filename);
+    showToast(t('token.cpaExportSuccess'), 'success');
+  } catch (err) {
+    showToast(t('token.cpaExportFailed', { msg: err.message }), 'error');
+  } finally {
+    isBatchProcessing = false;
+    batchTotal = 0;
+    batchProcessed = 0;
+    const progress = byId('batch-progress');
+    if (progress) progress.classList.add('hidden');
+    setActionButtonsState();
+  }
 }
 
 
@@ -1033,12 +1091,14 @@ function setActionButtonsState(selectedCount = null) {
   }
   const disabled = isBatchProcessing;
   const exportBtn = byId('btn-batch-export');
+  const exportCpaBtn = byId('btn-batch-export-cpa');
   const updateBtn = byId('btn-batch-update');
   const disableBtn = byId('btn-batch-disable');
   const enableBtn = byId('btn-batch-enable');
   const nsfwBtn = byId('btn-batch-nsfw');
   const deleteBtn = byId('btn-batch-delete');
   if (exportBtn) exportBtn.disabled = disabled || count === 0;
+  if (exportCpaBtn) exportCpaBtn.disabled = disabled || count === 0;
   if (updateBtn) updateBtn.disabled = disabled || count === 0;
   if (disableBtn) disableBtn.disabled = disabled || count === 0;
   if (enableBtn) enableBtn.disabled = disabled || count === 0;
