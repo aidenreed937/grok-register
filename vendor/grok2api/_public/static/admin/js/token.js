@@ -1419,4 +1419,5 @@ async function batchEnableNSFW() {
 
 
 
+window.batchExportCPA = batchExportCPA;
 window.onload = init;
