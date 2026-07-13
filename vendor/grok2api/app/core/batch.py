@@ -143,6 +143,7 @@ class BatchTask:
         }
         if item is not None:
             event["item"] = item
+            event["currentToken"] = item
         if detail is not None:
             event["detail"] = detail
         if error:

@@ -19,6 +19,7 @@ from app.services.token.cpa_export import CpaExportError, sso_to_cpa_entry
 from app.services.token.manager import get_token_manager
 
 router = APIRouter()
+_CPA_EXPORTS: dict[str, dict] = {}
 
 _TOKEN_CHAR_REPLACEMENTS = str.maketrans(
     {
@@ -46,6 +47,59 @@ def _sanitize_token_text(value) -> str:
     if token.startswith("sso="):
         token = token[4:]
     return token.encode("ascii", errors="ignore").decode("ascii")
+
+
+def _mask_token(token: str) -> str:
+    return f"{token[:8]}...{token[-8:]}" if len(token) > 20 else token
+
+
+def _extract_sanitized_tokens(data: dict) -> list[str]:
+    tokens = []
+    if isinstance(data.get("token"), str) and data["token"].strip():
+        tokens.append(data["token"].strip())
+    if isinstance(data.get("tokens"), list):
+        tokens.extend([str(t).strip() for t in data["tokens"] if str(t).strip()])
+    unique_tokens = list(dict.fromkeys(_sanitize_token_text(t) for t in tokens if t))
+    return [t for t in unique_tokens if t]
+
+
+def _parse_cpa_retries(data: dict) -> int:
+    try:
+        max_retries = int(data.get("retries") or 8)
+    except (TypeError, ValueError):
+        max_retries = 8
+    return min(max(1, max_retries), 20)
+
+
+def _build_cpa_export_zip(
+    *,
+    total: int,
+    successes: list[dict],
+    failures: list[dict],
+    entries: list[tuple[str, dict]],
+) -> bytes:
+    zip_buffer = BytesIO()
+    with zipfile.ZipFile(zip_buffer, "w", compression=zipfile.ZIP_DEFLATED) as zf:
+        for filename, entry in entries:
+            zf.writestr(
+                filename,
+                json.dumps(entry, separators=(",", ":"), ensure_ascii=False),
+            )
+        zf.writestr(
+            "export-summary.json",
+            json.dumps(
+                {
+                    "total": total,
+                    "success": len(successes),
+                    "failed": len(failures),
+                    "files": successes,
+                    "failures": failures,
+                },
+                indent=2,
+                ensure_ascii=False,
+            ),
+        )
+    return zip_buffer.getvalue()
 
 
 @router.get("/tokens", dependencies=[Depends(verify_app_key)])
@@ -175,22 +229,11 @@ async def refresh_tokens(data: dict):
 @router.post("/tokens/export/cpa", dependencies=[Depends(verify_app_key)])
 async def export_cpa_tokens(data: dict):
     """将选中的 SSO token 导出为 cli-proxy-api xAI OAuth 文件 zip。"""
-    tokens = []
-    if isinstance(data.get("token"), str) and data["token"].strip():
-        tokens.append(data["token"].strip())
-    if isinstance(data.get("tokens"), list):
-        tokens.extend([str(t).strip() for t in data["tokens"] if str(t).strip()])
-
-    unique_tokens = list(dict.fromkeys(_sanitize_token_text(t) for t in tokens if t))
-    unique_tokens = [t for t in unique_tokens if t]
+    unique_tokens = _extract_sanitized_tokens(data)
     if not unique_tokens:
         raise HTTPException(status_code=400, detail="No tokens provided")
 
-    try:
-        max_retries = int(data.get("retries") or 8)
-    except (TypeError, ValueError):
-        max_retries = 8
-    max_retries = min(max(1, max_retries), 20)
+    max_retries = _parse_cpa_retries(data)
 
     zip_buffer = BytesIO()
     successes = []
@@ -242,6 +285,107 @@ async def export_cpa_tokens(data: dict):
     filename = f"cpa_export_{datetime.utcnow().strftime('%Y%m%d_%H%M%S')}.zip"
     headers = {"Content-Disposition": f'attachment; filename="{filename}"'}
     return Response(zip_buffer.getvalue(), media_type="application/zip", headers=headers)
+
+
+@router.post("/tokens/export/cpa/async", dependencies=[Depends(verify_app_key)])
+async def export_cpa_tokens_async(data: dict):
+    """将选中的 SSO token 异步导出为 cli-proxy-api xAI OAuth 文件 zip。"""
+    unique_tokens = _extract_sanitized_tokens(data)
+    if not unique_tokens:
+        raise HTTPException(status_code=400, detail="No tokens provided")
+
+    max_retries = _parse_cpa_retries(data)
+    task = create_task(len(unique_tokens))
+
+    async def _run():
+        successes = []
+        failures = []
+        entries = []
+        used_names = set()
+        try:
+            for index, token in enumerate(unique_tokens, 1):
+                if task.cancelled:
+                    task.finish_cancelled()
+                    return
+
+                masked = _mask_token(token)
+                try:
+                    filename, entry = await asyncio.to_thread(
+                        sso_to_cpa_entry,
+                        token,
+                        "",
+                        max_retries,
+                    )
+                    if filename in used_names:
+                        stem, suffix = filename.rsplit(".", 1)
+                        filename = f"{stem}-{index}.{suffix}"
+                    used_names.add(filename)
+                    entries.append((filename, entry))
+                    successes.append({"token": masked, "file": filename})
+                    task.record(True, item=masked, detail={"file": filename})
+                except CpaExportError as exc:
+                    error = str(exc)
+                    failures.append({"token": masked, "error": error})
+                    task.record(False, item=masked, error=error)
+                except Exception as exc:
+                    error = str(exc)
+                    failures.append({"token": masked, "error": error})
+                    task.record(False, item=masked, error=error)
+
+            result = {
+                "status": "success" if successes else "failed",
+                "summary": {
+                    "total": len(unique_tokens),
+                    "ok": len(successes),
+                    "fail": len(failures),
+                },
+                "files": successes,
+                "failures": failures,
+            }
+
+            if successes:
+                filename = f"cpa_export_{datetime.utcnow().strftime('%Y%m%d_%H%M%S')}.zip"
+                _CPA_EXPORTS[task.id] = {
+                    "filename": filename,
+                    "content": _build_cpa_export_zip(
+                        total=len(unique_tokens),
+                        successes=successes,
+                        failures=failures,
+                        entries=entries,
+                    ),
+                }
+                result["download_url"] = f"/v1/admin/tokens/export/cpa/{task.id}/download"
+
+            warning = None
+            if failures:
+                warning = failures[0]["error"] if not successes else f"{len(failures)} failed"
+            task.finish(result, warning=warning)
+        except Exception as e:
+            task.fail_task(str(e))
+        finally:
+            async def _cleanup():
+                await expire_task(task.id, 600)
+                _CPA_EXPORTS.pop(task.id, None)
+
+            asyncio.create_task(_cleanup())
+
+    asyncio.create_task(_run())
+
+    return {
+        "status": "success",
+        "task_id": task.id,
+        "total": len(unique_tokens),
+    }
+
+
+@router.get("/tokens/export/cpa/{task_id}/download", dependencies=[Depends(verify_app_key)])
+async def download_cpa_export(task_id: str):
+    export = _CPA_EXPORTS.get(task_id)
+    if not export:
+        raise HTTPException(status_code=404, detail="CPA export not found or expired")
+
+    headers = {"Content-Disposition": f'attachment; filename="{export["filename"]}"'}
+    return Response(export["content"], media_type="application/zip", headers=headers)
 
 
 @router.post("/tokens/refresh/async", dependencies=[Depends(verify_app_key)])

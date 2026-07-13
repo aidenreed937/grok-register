@@ -7,6 +7,9 @@ let isBatchPaused = false;
 let batchQueue = [];
 let batchTotal = 0;
 let batchProcessed = 0;
+let batchOk = 0;
+let batchFail = 0;
+let batchCurrentToken = '';
 let currentBatchAction = null;
 let currentFilter = 'all';
 let currentBatchTaskId = null;
@@ -537,49 +540,116 @@ async function batchExportCPA() {
   if (selected.length === 0) return showToast(t('common.noTokenSelected'), 'error');
 
   isBatchProcessing = true;
+  isBatchPaused = false;
+  currentBatchAction = 'cpa-export';
+  batchQueue = selected.map(t => t.token);
   batchTotal = selected.length;
   batchProcessed = 0;
-  const progressText = byId('batch-progress-text');
-  if (progressText) progressText.textContent = t('token.cpaExportRunning', { count: selected.length });
-  const progress = byId('batch-progress');
-  if (progress) progress.classList.remove('hidden');
-  setActionButtonsState(selected.length);
+  batchOk = 0;
+  batchFail = 0;
+  batchCurrentToken = '';
+  updateBatchProgress();
+  setActionButtonsState();
 
   try {
-    const res = await fetch('/v1/admin/tokens/export/cpa', {
+    const res = await fetch('/v1/admin/tokens/export/cpa/async', {
       method: 'POST',
       headers: {
         'Content-Type': 'application/json',
         ...buildAuthHeaders(apiKey)
       },
-      body: JSON.stringify({ tokens: selected.map(t => t.token) })
+      body: JSON.stringify({ tokens: batchQueue })
     });
 
-    if (!res.ok) {
-      let message = `HTTP ${res.status}`;
-      try {
-        const data = await res.json();
-        message = data.detail || message;
-      } catch (_) {}
-      throw new Error(message);
+    const data = await readJsonResponse(res);
+    if (!res.ok || !data || data.status !== 'success') {
+      const detail = data && (data.detail || data.message);
+      throw new Error(detail || `HTTP ${res.status}`);
     }
 
-    const blob = await res.blob();
-    const disposition = res.headers.get('Content-Disposition') || '';
-    const match = disposition.match(/filename="?([^"]+)"?/i);
-    const filename = match ? match[1] : `cpa_export_${new Date().toISOString().slice(0, 10)}.zip`;
-    downloadBlob(blob, filename);
-    showToast(t('token.cpaExportSuccess'), 'success');
+    currentBatchTaskId = data.task_id;
+    BatchSSE.close(batchEventSource);
+    batchEventSource = BatchSSE.open(currentBatchTaskId, apiKey, {
+      onMessage: async (msg) => {
+        if (msg.type === 'snapshot' || msg.type === 'progress') {
+          if (typeof msg.total === 'number') batchTotal = msg.total;
+          if (typeof msg.processed === 'number') batchProcessed = msg.processed;
+          if (typeof msg.ok === 'number') batchOk = msg.ok;
+          if (typeof msg.fail === 'number') batchFail = msg.fail;
+          batchCurrentToken = msg.currentToken || msg.item || batchCurrentToken;
+          updateBatchProgress();
+        } else if (msg.type === 'done') {
+          if (typeof msg.total === 'number') batchTotal = msg.total;
+          batchProcessed = batchTotal;
+          if (typeof msg.ok === 'number') batchOk = msg.ok;
+          if (typeof msg.fail === 'number') batchFail = msg.fail;
+          updateBatchProgress();
+
+          const result = msg.result || {};
+          const summary = result.summary || {};
+          const okCount = typeof summary.ok === 'number' ? summary.ok : batchOk;
+          const failCount = typeof summary.fail === 'number' ? summary.fail : batchFail;
+          const downloadUrl = result.download_url || result.downloadUrl;
+          try {
+            if (!downloadUrl) {
+              throw new Error(t('token.cpaExportNoFile', { ok: okCount, fail: failCount }));
+            }
+            await downloadCpaExport(downloadUrl);
+            showToast(t('token.cpaExportResult', { ok: okCount, fail: failCount }), failCount > 0 ? 'warning' : 'success');
+          } catch (err) {
+            showToast(t('token.cpaExportFailed', { msg: err.message }), 'error');
+          } finally {
+            finishBatchProcess(false, { silent: true, reload: false });
+            currentBatchTaskId = null;
+            BatchSSE.close(batchEventSource);
+            batchEventSource = null;
+          }
+        } else if (msg.type === 'cancelled') {
+          finishBatchProcess(true, { silent: true, reload: false });
+          showToast(t('token.stopCpaExport'), 'info');
+          currentBatchTaskId = null;
+          BatchSSE.close(batchEventSource);
+          batchEventSource = null;
+        } else if (msg.type === 'error') {
+          finishBatchProcess(true, { silent: true, reload: false });
+          showToast(t('token.cpaExportFailed', { msg: msg.error || t('common.unknownError') }), 'error');
+          currentBatchTaskId = null;
+          BatchSSE.close(batchEventSource);
+          batchEventSource = null;
+        }
+      },
+      onError: () => {
+        finishBatchProcess(true, { silent: true, reload: false });
+        showToast(t('common.connectionInterrupted'), 'error');
+        currentBatchTaskId = null;
+        BatchSSE.close(batchEventSource);
+        batchEventSource = null;
+      }
+    });
   } catch (err) {
+    finishBatchProcess(true, { silent: true, reload: false });
     showToast(t('token.cpaExportFailed', { msg: err.message }), 'error');
-  } finally {
-    isBatchProcessing = false;
-    batchTotal = 0;
-    batchProcessed = 0;
-    const progress = byId('batch-progress');
-    if (progress) progress.classList.add('hidden');
-    setActionButtonsState();
+    currentBatchTaskId = null;
   }
+}
+
+async function downloadCpaExport(downloadUrl) {
+  const res = await fetch(downloadUrl, {
+    headers: buildAuthHeaders(apiKey)
+  });
+  if (!res.ok) {
+    let message = `HTTP ${res.status}`;
+    try {
+      const data = await res.json();
+      message = data.detail || message;
+    } catch (_) {}
+    throw new Error(message);
+  }
+  const blob = await res.blob();
+  const disposition = res.headers.get('Content-Disposition') || '';
+  const match = disposition.match(/filename="?([^"]+)"?/i);
+  const filename = match ? match[1] : `cpa_export_${new Date().toISOString().slice(0, 10)}.zip`;
+  downloadBlob(blob, filename);
 }
 
 
@@ -1033,11 +1103,16 @@ function finishBatchProcess(aborted = false, options = {}) {
   isBatchPaused = false;
   batchQueue = [];
   currentBatchAction = null;
+  batchOk = 0;
+  batchFail = 0;
+  batchCurrentToken = '';
 
   updateBatchProgress();
   setActionButtonsState();
   updateSelectionState();
-  loadData(); // Final data refresh
+  if (options.reload !== false) {
+    loadData(); // Final data refresh
+  }
 
   if (options.silent) return;
   if (aborted) {
@@ -1045,6 +1120,8 @@ function finishBatchProcess(aborted = false, options = {}) {
       showToast(t('token.stopDelete'), 'info');
     } else if (action === 'nsfw') {
       showToast(t('token.stopNsfw'), 'info');
+    } else if (action === 'cpa-export') {
+      showToast(t('token.stopCpaExport'), 'info');
     } else {
       showToast(t('token.stopRefresh'), 'info');
     }
@@ -1053,6 +1130,8 @@ function finishBatchProcess(aborted = false, options = {}) {
       showToast(t('token.deleteDone'), 'success');
     } else if (action === 'nsfw') {
       showToast(t('token.nsfwDone'), 'success');
+    } else if (action === 'cpa-export') {
+      showToast(t('token.cpaExportSuccess'), 'success');
     } else {
       showToast(t('token.refreshDone'), 'success');
     }
@@ -1075,8 +1154,21 @@ function updateBatchProgress() {
     if (stopBtn) stopBtn.classList.add('hidden');
     return;
   }
-  const pct = batchTotal ? Math.floor((batchProcessed / batchTotal) * 100) : 0;
-  text.textContent = `${pct}%`;
+  if (currentBatchAction === 'cpa-export') {
+    const progress = {
+      processed: batchProcessed,
+      total: batchTotal,
+      ok: batchOk,
+      fail: batchFail,
+      token: batchCurrentToken
+    };
+    text.textContent = batchCurrentToken
+      ? t('token.cpaExportProgressWithToken', progress)
+      : t('token.cpaExportProgress', progress);
+  } else {
+    const pct = batchTotal ? Math.floor((batchProcessed / batchTotal) * 100) : 0;
+    text.textContent = `${pct}%`;
+  }
   container.classList.remove('hidden');
   if (pauseBtn) {
     pauseBtn.classList.add('hidden');
