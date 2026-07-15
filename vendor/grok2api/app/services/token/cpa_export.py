@@ -21,6 +21,7 @@ SCOPES = (
 CPA_BASE_URL = "https://cli-chat-proxy.grok.com/v1"
 CPA_TOKEN_ENDPOINT = f"{OIDC_ISSUER}/oauth2/token"
 CPA_REDIRECT_URI = "http://127.0.0.1:56121/callback"
+CPA_MIN_TTL_SECONDS = 300
 CPA_HEADERS = {
     "x-grok-client-version": "0.2.93",
     "x-xai-token-auth": "xai-grok-cli",
@@ -158,6 +159,25 @@ def enrich_token_with_userinfo(token: dict) -> dict:
     return token
 
 
+def ensure_token_fresh(access_payload: dict, expires_in: int) -> None:
+    exp = access_payload.get("exp")
+    if exp is not None:
+        try:
+            exp_ts = float(exp)
+        except (TypeError, ValueError):
+            exp_ts = 0.0
+        if exp_ts and exp_ts <= time.time() + CPA_MIN_TTL_SECONDS:
+            raise CpaExportError(
+                "access token is expired or too close to expiry; regenerate sso and re-export cpa"
+            )
+        return
+
+    if expires_in <= 0:
+        raise CpaExportError(
+            "access token has no expiry metadata; regenerate sso and re-export cpa"
+        )
+
+
 def sso_to_token(sso_cookie: str, max_retries: int = 8, base_delay: float = 15.0) -> dict:
     try:
         from curl_cffi import requests
@@ -277,6 +297,7 @@ def token_to_cpa_entry(token: dict, email: str = "") -> tuple[str, dict]:
 
     access_payload = decode_jwt_payload(access)
     id_payload = decode_jwt_payload(id_token) if id_token else {}
+    ensure_token_fresh(access_payload, expires_in)
     sub = access_payload.get("sub") or access_payload.get("principal_id") or id_payload.get("sub") or ""
     resolved_email = (
         email
